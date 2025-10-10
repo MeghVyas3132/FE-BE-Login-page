@@ -103,88 +103,127 @@ export default function App() {
 
   return (
     <div className="app-wrap">
+      {/* Video background - place a file at public/bg-tech.mp4 */}
+      <video className="bg-video" autoPlay muted loop playsInline>
+        <source src="/bg-tech.mp4" type="video/mp4" />
+        Your browser does not support the video tag.
+      </video>
+      <div className="bg-overlay" aria-hidden />
+      <div className="bg-animated" aria-hidden />
       <div className="container">
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
           <div className="brand">MyApp <span style={{fontWeight:400, color:'#8b95a6', marginLeft:8}}>Supabase demo</span></div>
           {user ? <div style={{color:'#9aa4b2'}}>Signed in as {user.email}</div> : null}
         </div>
 
-        <div className="grid">
-          <div className="card">
-            {!user ? (
-              <>
-                <label>Email</label>
-                <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-                <label>Password</label>
-                <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
-                <div className="buttons" style={{marginTop:12}}>
-                  <button onClick={signIn} disabled={loading}>Sign in</button>
-                  <button className="secondary" onClick={signUp} disabled={loading}>Sign up</button>
+        <div className="grid" style={{gridTemplateColumns: user ? '1fr' : '1fr', gap:22}}>
+          {/* When not signed in: show only the auth/sign-up card */}
+          {!user && (
+            <div className="card">
+              <label>Email</label>
+              <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+              <label>Password</label>
+              <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+              <div className="buttons" style={{marginTop:12}}>
+                <button onClick={signIn} disabled={loading}>Sign in</button>
+                <button className="secondary button-glass" onClick={signUp} disabled={loading}>Sign up</button>
+              </div>
+              <div style={{marginTop:10}}>
+                {!forgotMode ? (
+                  <button className="secondary button-glass" onClick={() => setForgotMode(true)}>Forgot password?</button>
+                ) : (
+                  <>
+                    <button className="secondary button-glass" onClick={sendPasswordReset}>Send reset link</button>
+                    <button className="secondary button-glass" onClick={() => setForgotMode(false)} style={{marginLeft:8}}>Cancel</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* When signed in: show only the profile/admin card */}
+          {user && (
+            <div className="card">
+              <div className="profile">
+                <div className="avatar">{user.email?.charAt(0).toUpperCase()}</div>
+                <div>
+                  <div style={{fontWeight:600}}>{user.email}</div>
+                  <div style={{color:'#8b95a6',fontSize:13}}>Member since: {new Date(user.created_at).toLocaleDateString()}</div>
                 </div>
-                <div style={{marginTop:10}}>
-                  {!forgotMode ? (
-                    <button className="secondary" onClick={() => setForgotMode(true)}>Forgot password?</button>
-                  ) : (
-                    <>
-                      <button className="secondary" onClick={sendPasswordReset}>Send reset link</button>
-                      <button className="secondary" onClick={() => setForgotMode(false)} style={{marginLeft:8}}>Cancel</button>
-                    </>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div>
-                <div className="profile">
-                  <div className="avatar">{user.email?.charAt(0).toUpperCase()}</div>
-                  <div>
-                    <div style={{fontWeight:600}}>{user.email}</div>
-                    <div style={{color:'#8b95a6',fontSize:13}}>Member since: {new Date(user.created_at).toLocaleDateString()}</div>
+              </div>
+
+              <div style={{marginTop:12}}>
+                <button onClick={fetchProfile}>Fetch profile</button>
+                <button className="secondary" onClick={logout} style={{marginLeft:8}}>Logout</button>
+              </div>
+
+              <h3 style={{marginTop:18}}>Profile</h3>
+              {profile ? (
+                <div style={{marginTop:8}}>
+                  <div style={{display:'flex',gap:12,alignItems:'center',marginBottom:12}}>
+                    <div className="avatar" style={{width:72,height:72,fontSize:20}}>{(profile.email||user.email||'').charAt(0).toUpperCase()}</div>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:16}}>{profile.full_name || user.email}</div>
+                      <div style={{color:'#8b95a6',fontSize:13}}>{profile.email || user.email}</div>
+                    </div>
+                  </div>
+
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                    <div style={{background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8}}>
+                      <div style={{color:'#9aa4b2',fontSize:12}}>Role</div>
+                      <div style={{fontWeight:600,marginTop:6}}>{profile.role || 'user'}</div>
+                    </div>
+                    <div style={{background:'rgba(255,255,255,0.02)',padding:12,borderRadius:8}}>
+                      <div style={{color:'#9aa4b2',fontSize:12}}>User ID</div>
+                      <div style={{fontWeight:600,marginTop:6,wordBreak:'break-all'}}>{profile.id}</div>
+                    </div>
+                  </div>
+
+                  {/* render extra metadata (created_at, updated_at etc.) */}
+                  <div style={{marginTop:12}}>
+                    <div style={{color:'#9aa4b2',fontSize:12,marginBottom:8}}>Details</div>
+                    <div style={{display:'grid',gap:8}}>
+                      {Object.entries(profile).filter(([k])=>!['id','email','full_name','role'].includes(k)).map(([k,v]) => (
+                        <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'rgba(255,255,255,0.01)',borderRadius:8}}>
+                          <div style={{color:'#9aa4b2',fontSize:13}}>{k}</div>
+                          <div style={{fontWeight:600,color:'#e6eef8'}}>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-
-                <div style={{marginTop:12}}>
-                  <button onClick={fetchProfile}>Fetch profile</button>
-                  <button className="secondary" onClick={logout} style={{marginLeft:8}}>Logout</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <h3>Profile</h3>
-            {profile ? (
-              <pre>{JSON.stringify(profile, null, 2)}</pre>
-            ) : (
-              <div style={{color:'#9aa4b2'}}>No profile loaded. When signed in, click "Fetch profile" to load it from the server.</div>
-            )}
-
-            {/* Admin area */}
-            <div style={{marginTop:16}}>
-              <h4>Admin</h4>
-              <div style={{display:'flex',gap:8}}>
-                <button className="secondary" onClick={fetchAllProfiles}>Load all users</button>
-              </div>
-              {allProfiles.length > 0 && (
-                <div style={{marginTop:12}}>
-                  {allProfiles.map(p => (
-                    <div key={p.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.02)'}}>
-                      <div>
-                        <div style={{fontWeight:600}}>{p.email}</div>
-                        <div style={{color:'#8b95a6'}}>{p.full_name || '—'} • {p.role || 'user'}</div>
-                      </div>
-                      <div style={{display:'flex',gap:8}}>
-                        {p.role !== 'admin' ? (
-                          <button onClick={() => setUserRole(p.id, 'admin')}>Promote</button>
-                        ) : (
-                          <button className="secondary" onClick={() => setUserRole(p.id, 'user')}>Demote</button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              ) : (
+                <div style={{color:'#9aa4b2'}}>No profile loaded. Click "Fetch profile" to load it from the server.</div>
               )}
+
+              {/* Admin area (visible when signed in) */}
+              <div style={{marginTop:16}}>
+                <h4>Admin</h4>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="secondary" onClick={fetchAllProfiles}>Load all users</button>
+                </div>
+                {allProfiles.length > 0 && (
+                  <div style={{marginTop:12}}>
+                    {allProfiles.map(p => (
+                      <div key={p.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid rgba(255,255,255,0.02)'}}>
+                        <div>
+                          <div style={{fontWeight:600}}>{p.email}</div>
+                          <div style={{color:'#8b95a6'}}>{p.full_name || '—'} • {p.role || 'user'}</div>
+                        </div>
+                        <div style={{display:'flex',gap:8}}>
+                          {p.role !== 'admin' ? (
+                            <button onClick={() => setUserRole(p.id, 'admin')}>Promote</button>
+                          ) : (
+                            <button className="secondary" onClick={() => setUserRole(p.id, 'user')}>Demote</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
