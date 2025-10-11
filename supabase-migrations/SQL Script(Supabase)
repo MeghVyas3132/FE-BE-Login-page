@@ -1,0 +1,238 @@
+-- Full idempotent migration: add role + admin-aware RLS + triggers + RPC
+-- File: 000_full_users_projects_admin_migration.sql
+
+-- 0) Make sure pgcrypto is available for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 1) Users table (extends auth.users)
+CREATE TABLE IF NOT EXISTS public.users (
+  id UUID REFERENCES auth.users(id) PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT,
+  role TEXT DEFAULT 'user',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2) Projects table (user-specific)
+CREATE TABLE IF NOT EXISTS public.projects (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  repo_url TEXT,
+  type TEXT,
+  status TEXT DEFAULT 'pending',
+  subdomain TEXT UNIQUE NOT NULL,
+  port INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, name)
+);
+
+-- 3) Webhook configurations table
+CREATE TABLE IF NOT EXISTS public.webhook_configs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+  project_name TEXT NOT NULL,
+  repo_url TEXT NOT NULL,
+  branch TEXT DEFAULT 'main',
+  secret TEXT NOT NULL,
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, project_name)
+);
+
+-- 4) Deployment logs table
+CREATE TABLE IF NOT EXISTS public.deployment_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES public.users(id) ON DELETE CASCADE NOT NULL,
+  status TEXT NOT NULL,
+  log_data JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5) Enable Row Level Security on tables
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.webhook_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.deployment_logs ENABLE ROW LEVEL SECURITY;
+
+-- 6) Helper: update_updated_at trigger function
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Attach updated_at triggers where appropriate (idempotent by dropping first)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_users_updated_at') THEN
+    DROP TRIGGER update_users_updated_at ON public.users;
+  END IF;
+  CREATE TRIGGER update_users_updated_at
+    BEFORE UPDATE ON public.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.update_updated_at_column();
+EXCEPTION WHEN undefined_function THEN
+  RAISE NOTICE 'Trigger creation for users failed';
+END$$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_projects_updated_at') THEN
+    DROP TRIGGER update_projects_updated_at ON public.projects;
+  END IF;
+  CREATE TRIGGER update_projects_updated_at
+    BEFORE UPDATE ON public.projects
+    FOR EACH ROW
+    EXECUTE FUNCTION public.update_updated_at_column();
+EXCEPTION WHEN undefined_function THEN
+  RAISE NOTICE 'Trigger creation for projects failed';
+END$$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_webhook_configs_updated_at') THEN
+    DROP TRIGGER update_webhook_configs_updated_at ON public.webhook_configs;
+  END IF;
+  CREATE TRIGGER update_webhook_configs_updated_at
+    BEFORE UPDATE ON public.webhook_configs
+    FOR EACH ROW
+    EXECUTE FUNCTION public.update_updated_at_column();
+EXCEPTION WHEN undefined_function THEN
+  RAISE NOTICE 'Trigger creation for webhook_configs failed';
+END$$;
+
+-- 7) Policies: users table (owner or admin)
+DROP POLICY IF EXISTS "Users can view own data" ON public.users;
+CREATE POLICY "Users can view own data or admin" ON public.users
+  FOR SELECT USING (
+    auth.uid() = id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can update own data" ON public.users;
+CREATE POLICY "Users can update own data or admin" ON public.users
+  FOR UPDATE USING (
+    auth.uid() = id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+-- Keep insert limited to auth trigger flow (only allow inserts where auth.uid() = id)
+DROP POLICY IF EXISTS "Users can insert own data" ON public.users;
+CREATE POLICY "Users can insert own data" ON public.users
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- 8) Projects policies (owner or admin)
+DROP POLICY IF EXISTS "Users can view own projects" ON public.projects;
+CREATE POLICY "Users can view own projects or admin" ON public.projects
+  FOR SELECT USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can insert own projects" ON public.projects;
+CREATE POLICY "Users can insert own projects or admin" ON public.projects
+  FOR INSERT WITH CHECK (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can update own projects" ON public.projects;
+CREATE POLICY "Users can update own projects or admin" ON public.projects
+  FOR UPDATE USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can delete own projects" ON public.projects;
+CREATE POLICY "Users can delete own projects or admin" ON public.projects
+  FOR DELETE USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+-- 9) webhook_configs policies (owner or admin)
+DROP POLICY IF EXISTS "Users can view own webhooks" ON public.webhook_configs;
+CREATE POLICY "Users can view own webhooks or admin" ON public.webhook_configs
+  FOR SELECT USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can insert own webhooks" ON public.webhook_configs;
+CREATE POLICY "Users can insert own webhooks or admin" ON public.webhook_configs
+  FOR INSERT WITH CHECK (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can update own webhooks" ON public.webhook_configs;
+CREATE POLICY "Users can update own webhooks or admin" ON public.webhook_configs
+  FOR UPDATE USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Users can delete own webhooks" ON public.webhook_configs;
+CREATE POLICY "Users can delete own webhooks or admin" ON public.webhook_configs
+  FOR DELETE USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+-- 10) deployment_logs policies (owner or admin)
+DROP POLICY IF EXISTS "Users can view own logs" ON public.deployment_logs;
+CREATE POLICY "Users can view own logs or admin" ON public.deployment_logs
+  FOR SELECT USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Admins can delete deployment logs" ON public.deployment_logs;
+CREATE POLICY "Admins can delete deployment logs" ON public.deployment_logs
+  FOR DELETE USING (
+    auth.uid() = user_id
+    OR EXISTS (SELECT 1 FROM public.users u2 WHERE u2.id = auth.uid() AND u2.role = 'admin')
+  );
+
+-- 11) Auto-create user profile: handle_new_user
+-- Create or replace the function
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Insert a corresponding row in public.users when auth.users gets a new row
+  INSERT INTO public.users (id, email, full_name)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    NEW.raw_user_meta_data->>'full_name'
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Drop existing trigger and recreate (idempotent)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 12) RPC to set a user's role (server-only call via service_role)
+CREATE OR REPLACE FUNCTION public.set_user_role(target_uuid UUID, new_role TEXT)
+RETURNS VOID AS $$
+BEGIN
+  UPDATE public.users SET role = new_role WHERE id = target_uuid;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 13) (Optional) ensure updated_at trigger exists for any other table you may add in future
+-- The update_updated_at_column function was created above; triggers already attached.
+
+-- DONE
