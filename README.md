@@ -4,25 +4,6 @@ A clean, secure, and extensible example implementation of a login system with a 
 
 > NOTE: This README is intentionally implementation-agnostic — please adjust the environment variables, commands, and endpoint examples to match the concrete code in this repository.
 
-## Table of Contents
-
-- [Key Features](#key-features)
-- [Project Structure](#project-structure)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Clone](#clone)
-  - [Install](#install)
-  - [Environment Variables](#environment-variables)
-  - [Run Locally](#run-locally)
-- [Authentication Flow](#authentication-flow)
-- [API (Common Endpoints)](#api-common-endpoints)
-- [Security Considerations](#security-considerations)
-- [Testing & Linting](#testing--linting)
-- [Deployment](#deployment)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
 
 ---
 
@@ -165,6 +146,4 @@ Adjust the paths and behaviors to match the backend code. Example endpoints:
 
 - PUT /api/users/:id
   - Protected/admin: update user info
-
-Document any additional endpoints, request/response schemas and error codes in the codebase or an OpenAPI spec if present.
 
